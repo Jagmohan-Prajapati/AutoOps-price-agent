@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import type React from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { 
   History, 
   Download, 
@@ -16,116 +17,198 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { ScanRun, ActivityLog } from '../types';
 import { cn } from '../lib/utils';
+import { getScanHistory, getScanDetail } from '../lib/api';
 
-const MOCK_SCANS: ScanRun[] = [
-  {
-    id: 'SCAN-9821',
-    dateTime: 'Oct 30, 2023 09:42 AM',
-    productsScanned: 124,
-    platforms: ['Amazon', 'Flipkart', 'Myntra'],
-    duration: '2m 14s',
-    alertsFound: 12,
-    status: 'Completed',
-    startTime: '09:42:01 AM',
-    endTime: '09:44:15 AM',
-    productBreakdown: [
-      { id: '1', name: 'Blue Cotton Kurta', amazonPrice: 849, flipkartPrice: 899, myntraPrice: 920, alertTriggered: true },
-      { id: '2', name: "Women's Ethnic Dress", amazonPrice: 1599, flipkartPrice: 1649, myntraPrice: 1550, alertTriggered: false },
-      { id: '3', name: "Men's Polo T-Shirt", amazonPrice: 599, flipkartPrice: 620, myntraPrice: 599, alertTriggered: false },
-      { id: '4', name: 'Embroidered Silk Saree', amazonPrice: 3800, flipkartPrice: 4100, myntraPrice: 3950, alertTriggered: true },
-    ],
-    logs: [
-      { id: '1', timestamp: '09:42:01', message: "Agent initialization complete. Starting scan...", type: 'info' },
-      { id: '2', timestamp: '09:42:15', message: "Scanning Amazon.in for 124 products...", type: 'info' },
-      { id: '3', timestamp: '09:43:10', message: "Amazon scan complete. 8 price changes detected.", type: 'success' },
-      { id: '4', timestamp: '09:43:15', message: "Scanning Flipkart.com...", type: 'info' },
-      { id: '5', timestamp: '09:44:00', message: "Flipkart scan complete. 4 price changes detected.", type: 'success' },
-      { id: '6', timestamp: '09:44:15', message: "Scan run SCAN-9821 finalized.", type: 'success' },
-    ]
-  },
-  {
-    id: 'SCAN-9820',
-    dateTime: 'Oct 29, 2023 02:15 PM',
-    productsScanned: 84,
-    platforms: ['Amazon', 'Flipkart'],
-    duration: '1m 45s',
-    alertsFound: 5,
-    status: 'Completed',
-    startTime: '02:15:00 PM',
-    endTime: '02:16:45 PM',
-    productBreakdown: [],
-    logs: []
-  },
-  {
-    id: 'SCAN-9819',
-    dateTime: 'Oct 28, 2023 11:30 AM',
-    productsScanned: 210,
-    platforms: ['Amazon', 'Flipkart', 'Myntra'],
-    duration: '4m 12s',
-    alertsFound: 0,
-    status: 'Failed',
-    startTime: '11:30:00 AM',
-    endTime: '11:34:12 AM',
-    productBreakdown: [],
-    logs: [
-      { id: '1', timestamp: '11:30:00', message: "Starting scan...", type: 'info' },
-      { id: '2', timestamp: '11:32:10', message: "Connection timeout on Myntra proxy.", type: 'error' },
-      { id: '3', timestamp: '11:34:12', message: "Scan aborted due to multiple network failures.", type: 'error' },
-    ]
-  },
-  {
-    id: 'SCAN-9818',
-    dateTime: 'Oct 27, 2023 04:20 PM',
-    productsScanned: 45,
-    platforms: ['Myntra'],
-    duration: '58s',
-    alertsFound: 2,
-    status: 'Completed',
-    startTime: '04:20:00 PM',
-    endTime: '04:20:58 PM',
-    productBreakdown: [],
-    logs: []
-  },
-  {
-    id: 'SCAN-9817',
-    dateTime: 'Oct 26, 2023 10:05 AM',
-    productsScanned: 150,
-    platforms: ['Amazon', 'Flipkart', 'Myntra'],
-    duration: '3m 05s',
-    alertsFound: 18,
-    status: 'Completed',
-    startTime: '10:05:00 AM',
-    endTime: '10:08:05 AM',
-    productBreakdown: [],
-    logs: []
-  },
-  {
-    id: 'SCAN-9816',
-    dateTime: 'Oct 25, 2023 01:40 PM',
-    productsScanned: 12,
-    platforms: ['Amazon'],
-    duration: 'Running',
-    alertsFound: 1,
-    status: 'In Progress',
-    startTime: '01:40:00 PM',
-    endTime: '-',
-    productBreakdown: [],
-    logs: [
-      { id: '1', timestamp: '01:40:00', message: "Initializing agent...", type: 'info' },
-      { id: '2', timestamp: '01:41:10', message: "Scanning Amazon catalog...", type: 'info' },
-    ]
+function toArray<T = any>(value: any): T[] {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.items)) return value.items;
+  if (Array.isArray(value?.data)) return value.data;
+  if (Array.isArray(value?.results)) return value.results;
+  return [];
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return '-';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatTime(value?: string | null) {
+  if (!value) return '-';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function formatDuration(start?: string | null, end?: string | null, raw?: string | number | null) {
+  if (typeof raw === 'string' && raw.trim()) return raw;
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    const mins = Math.floor(raw / 60);
+    const secs = raw % 60;
+    return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
   }
-];
+
+  if (!start) return '-';
+  const startDate = new Date(start);
+  const endDate = end ? new Date(end) : null;
+
+  if (Number.isNaN(startDate.getTime())) return '-';
+  if (!endDate || Number.isNaN(endDate.getTime())) return 'Running';
+
+  const totalSeconds = Math.max(0, Math.floor((endDate.getTime() - startDate.getTime()) / 1000));
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+}
+
+function normalizeStatus(status?: string | null) {
+  const s = (status || '').toLowerCase();
+  if (s.includes('complete') || s === 'success' || s === 'finished') return 'Completed';
+  if (s.includes('fail') || s === 'error') return 'Failed';
+  if (s.includes('progress') || s === 'running' || s === 'queued' || s === 'started') return 'In Progress';
+  return status || 'In Progress';
+}
+
+function normalizePlatforms(item: any): string[] {
+  return (
+    item?.platforms ||
+    item?.platform_names ||
+    item?.scan_platforms ||
+    []
+  ).map((p: any) => String(p));
+}
+
+function normalizeLogs(logs: any[]): ActivityLog[] {
+  return logs.map((log: any, idx: number) => ({
+    id: String(log?.id ?? idx + 1),
+    timestamp: formatTime(log?.timestamp || log?.created_at || log?.time),
+    message: log?.message || log?.event || log?.detail || 'Event recorded',
+    type:
+      log?.type ||
+      (String(log?.level || '').toLowerCase().includes('error')
+        ? 'error'
+        : String(log?.level || '').toLowerCase().includes('success')
+        ? 'success'
+        : 'info'),
+  }));
+}
+
+function normalizeProductBreakdown(items: any[]) {
+  return items.map((p: any, idx: number) => ({
+    id: String(p?.id ?? idx + 1),
+    name: p?.name || p?.product_name || `Product ${idx + 1}`,
+    amazonPrice: Number(p?.amazonPrice ?? p?.amazon_price ?? p?.amazon ?? 0),
+    flipkartPrice: Number(p?.flipkartPrice ?? p?.flipkart_price ?? p?.flipkart ?? 0),
+    myntraPrice: Number(p?.myntraPrice ?? p?.myntra_price ?? p?.myntra ?? 0),
+    alertTriggered: Boolean(p?.alertTriggered ?? p?.alert_triggered ?? p?.has_alert ?? false),
+  }));
+}
+
+function normalizeScan(item: any): ScanRun {
+  const start = item?.startTime || item?.start_time || item?.started_at || item?.created_at || null;
+  const end = item?.endTime || item?.end_time || item?.completed_at || item?.finished_at || null;
+  const logs = normalizeLogs(toArray(item?.logs));
+  const productBreakdown = normalizeProductBreakdown(
+    toArray(item?.productBreakdown || item?.product_breakdown)
+  );
+
+  return {
+    id: String(item?.id ?? item?.scan_id ?? item?.scanId ?? ''),
+    dateTime: formatDateTime(item?.dateTime || item?.date_time || start || item?.created_at),
+    productsScanned: Number(
+      item?.productsScanned ??
+        item?.products_scanned ??
+        item?.product_count ??
+        item?.total_products ??
+        0
+    ),
+    platforms: normalizePlatforms(item),
+    duration: formatDuration(
+      start,
+      end,
+      item?.duration ?? item?.duration_seconds
+    ),
+    alertsFound: Number(item?.alertsFound ?? item?.alerts_found ?? item?.alert_count ?? 0),
+    status: normalizeStatus(item?.status),
+    startTime: formatTime(start),
+    endTime: end ? formatTime(end) : '-',
+    productBreakdown,
+    logs,
+  };
+}
+
+function durationToSeconds(duration: string) {
+  if (!duration || duration === '-' || duration === 'Running') return 0;
+  const minMatch = duration.match(/(\d+)m/);
+  const secMatch = duration.match(/(\d+)s/);
+  const mins = minMatch ? Number(minMatch[1]) : 0;
+  const secs = secMatch ? Number(secMatch[1]) : 0;
+  return mins * 60 + secs;
+}
+
+function averageDuration(scans: ScanRun[]) {
+  const completed = scans.filter((s) => s.duration && s.duration !== '-' && s.duration !== 'Running');
+  if (!completed.length) return '-';
+
+  const total = completed.reduce((acc, s) => acc + durationToSeconds(s.duration), 0);
+  const avg = Math.floor(total / completed.length);
+  const mins = Math.floor(avg / 60);
+  const secs = avg % 60;
+  return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+}
 
 export const ScanHistory: React.FC<{ onRunScan: () => void }> = ({ onRunScan }) => {
   const [selectedScan, setSelectedScan] = useState<ScanRun | null>(null);
-  const [scans] = useState<ScanRun[]>(MOCK_SCANS);
+  const [scans, setScans] = useState<ScanRun[]>([]);
 
-  const stats = {
-    totalScans: scans.length,
-    productsScanned: scans.reduce((acc, s) => acc + s.productsScanned, 0),
-    alertsGenerated: scans.reduce((acc, s) => acc + s.alertsFound, 0),
-    avgDuration: '2m 34s'
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadScans() {
+      try {
+        const data = await getScanHistory();
+        const normalized = toArray(data).map(normalizeScan);
+        if (mounted) setScans(normalized);
+      } catch (error) {
+        console.error('Failed to load scan history:', error);
+        if (mounted) setScans([]);
+      }
+    }
+
+    loadScans();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const stats = useMemo(() => {
+    return {
+      totalScans: scans.length,
+      productsScanned: scans.reduce((acc, s) => acc + s.productsScanned, 0),
+      alertsGenerated: scans.reduce((acc, s) => acc + s.alertsFound, 0),
+      avgDuration: averageDuration(scans),
+    };
+  }, [scans]);
+
+  const handleViewDetails = async (scan: ScanRun) => {
+    try {
+      const detail = await getScanDetail(scan.id);
+      setSelectedScan(normalizeScan(detail));
+    } catch (error) {
+      console.error(`Failed to load scan detail for ${scan.id}:`, error);
+      setSelectedScan(scan);
+    }
   };
 
   if (scans.length === 0) {
@@ -263,7 +346,7 @@ export const ScanHistory: React.FC<{ onRunScan: () => void }> = ({ onRunScan }) 
                   </td>
                   <td className="px-6 py-5 text-right">
                     <button 
-                      onClick={() => setSelectedScan(scan)}
+                      onClick={() => handleViewDetails(scan)}
                       className="text-xs font-bold uppercase tracking-widest text-primary hover:text-primary-container transition-colors flex items-center gap-1 ml-auto"
                     >
                       View Details

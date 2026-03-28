@@ -1,4 +1,6 @@
-import React from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { getProducts, getAlerts, triggerScan, createScanStream } from '../lib/api';
+
 import { 
   Package, 
   Network, 
@@ -10,7 +12,7 @@ import {
   TrendingDown,
   AlertTriangle
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion } from 'framer-motion';
 import { Product, ActivityLog, Alert } from '../types';
 import { cn } from '../lib/utils';
 
@@ -103,7 +105,7 @@ const MOCK_ALERTS: Alert[] = [
   { id: '3', productName: 'Leather Laptop Bag', time: '3h ago', type: 'competitor', message: 'New competitor "StyleHub" launched same SKU' },
 ];
 
-export const Dashboard: React.FC<{ onProductClick: (id: string) => void }> = ({ onProductClick }) => {
+export const Dashboard = ({ onProductClick }: { onProductClick: (id: string) => void }) => {
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}

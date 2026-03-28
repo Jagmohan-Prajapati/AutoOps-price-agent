@@ -53,14 +53,15 @@ async def run_agent_for_platform(
                 raw = str(result_text)
                 start = raw.find("{")
                 end = raw.rfind("}") + 1
-                data = json.loads(raw[start:end]) if start != -1 else None
-
-            await event_callback({
-                "type": "agent_done",
-                "platform": platform,
-                "message": f"✅ [{platform.capitalize()}] Extracted price: ₹{data.get('price', 'N/A')}"
-            })
-            return data
+                # ADD THIS NULL GUARD
+                if start == -1 or end == 0:
+                    await event_callback({
+                        "type": "agent_error",
+                        "platform": platform,
+                        "message": f"[{platform.capitalize()}] Could not parse price data — agent returned no JSON"
+                    })
+                    return None
+                data = json.loads(raw[start:end])
 
     except Exception as e:
         await event_callback({
