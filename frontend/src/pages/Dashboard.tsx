@@ -1,3 +1,4 @@
+import type React from 'react';
 import { useEffect, useState, useRef } from 'react';
 import { getProducts, getAlerts, triggerScan, createScanStream } from '../lib/api';
 import {
