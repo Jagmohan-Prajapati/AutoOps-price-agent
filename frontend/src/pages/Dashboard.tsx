@@ -146,10 +146,27 @@ export const Dashboard: React.FC<{ onProductClick: (id: string) => void }> = ({ 
                   <tr key={product.id} onClick={() => onProductClick(product.id)} className="border-b border-outline/10 hover:bg-surface-bright/20 transition-colors group cursor-pointer">
                     <td className="px-4 py-3 font-semibold text-on-surface text-sm">{product.name}</td>
                     <td className="px-4 py-3 text-sm">₹{Number(product.your_price).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-sm text-on-surface-variant">—</td>
-                    <td className="px-4 py-3 text-sm text-on-surface-variant">—</td>
-                    <td className="px-4 py-3 text-sm text-on-surface-variant">—</td>
-                    <td className="px-4 py-3 text-sm text-on-surface-variant">—</td>
+                    <td className="px-6 py-4 text-sm text-center">
+                        {product.latest_prices?.amazon ? (
+                          <span className="text-on-surface font-medium">₹{Number(product.latest_prices.amazon.price).toLocaleString()}</span>
+                        ) : (
+                          <span className="text-on-surface-variant">—</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-center">
+                        {product.latest_prices?.flipkart ? (
+                          <span className="text-on-surface font-medium">₹{Number(product.latest_prices.flipkart.price).toLocaleString()}</span>
+                        ) : (
+                          <span className="text-on-surface-variant">—</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-center">
+                        {product.latest_prices?.myntra ? (
+                          <span className="text-on-surface font-medium">₹{Number(product.latest_prices.myntra.price).toLocaleString()}</span>
+                        ) : (
+                          <span className="text-on-surface-variant">—</span>
+                        )}
+                      </td>
                     <td className="px-4 py-3">
                       <span className="px-2 py-1 bg-primary/10 text-primary text-xs font-bold rounded-full">Run Scan</span>
                     </td>

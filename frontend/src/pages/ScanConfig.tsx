@@ -1,5 +1,6 @@
 import type React from 'react';
 import { useState } from 'react';
+import { getProducts } from '../lib/api';
 import { 
   Search, 
   Rocket, 
@@ -11,6 +12,12 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
+
+const [products, setProducts] = useState([]);
+
+useEffect(() => {
+  getProducts().then(setProducts).catch(console.error);
+}, []);
 
 export const ScanConfig: React.FC = () => {
   const [threshold, setThreshold] = useState(15);
