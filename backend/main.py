@@ -3,13 +3,11 @@ import json
 import os
 from datetime import datetime
 from typing import AsyncGenerator
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
-
 from db.supabase_client import supabase
 from agent.scraper import scan_product
 from analysis.pricing_engine import generate_repricing_recommendation
@@ -27,11 +25,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── In-memory SSE event queues per scan_id ─────────────────────────────────
+# -- In-memory SSE event queues per scan_id ----------------------------------
 scan_event_queues: dict[str, asyncio.Queue] = {}
 
-
-# ── Pydantic Models ────────────────────────────────────────────────────────
+# -- Pydantic Models ---------------------------------------------------------
 class ProductCreate(BaseModel):
     name: str
     category: str | None = None
@@ -45,12 +42,37 @@ class ScanRequest(BaseModel):
     product_ids: list[str]
     platforms: list[str] = ["amazon", "flipkart", "myntra"]
 
-
-# ── Products ───────────────────────────────────────────────────────────────
+# -- Products ----------------------------------------------------------------
 @app.get("/api/products")
 async def get_products():
     res = supabase.table("products").select("*").eq("is_active", True).execute()
-    return res.data
+    products = res.data
+
+    # FIX: Enrich each product with its latest scanned prices per platform
+    # so the Dashboard table can show real AMZ/FK/MYN prices immediately.
+    for product in products:
+        latest_res = (
+            supabase.table("price_history")
+            .select("platform, price, discount_percent, stock_status, scanned_at")
+            .eq("product_id", product["id"])
+            .order("scanned_at", desc=True)
+            .limit(30)
+            .execute()
+        )
+        latest_prices: dict = {}
+        seen_platforms: set = set()
+        for row in latest_res.data:
+            plat = row["platform"]
+            if plat not in seen_platforms:
+                latest_prices[plat] = {
+                    "price": row["price"],
+                    "discount_percent": row["discount_percent"],
+                    "stock_status": row["stock_status"],
+                }
+                seen_platforms.add(plat)
+        product["latest_prices"] = latest_prices
+
+    return products
 
 @app.post("/api/products")
 async def create_product(product: ProductCreate):
@@ -72,8 +94,7 @@ async def get_price_history(product_id: str):
     )
     return res.data
 
-
-# ── Alerts ─────────────────────────────────────────────────────────────────
+# -- Alerts ------------------------------------------------------------------
 @app.get("/api/alerts")
 async def get_alerts():
     res = (
@@ -90,8 +111,7 @@ async def mark_alert_read(alert_id: str):
     res = supabase.table("alerts").update({"is_read": True}).eq("id", alert_id).execute()
     return res.data[0]
 
-
-# ── Scan History ───────────────────────────────────────────────────────────
+# -- Scan History ------------------------------------------------------------
 @app.get("/api/scans")
 async def get_scan_history():
     res = (
@@ -124,8 +144,7 @@ async def get_scan_detail(scan_id: str):
         "price_data": price_data.data
     }
 
-
-# ── Trigger Scan ───────────────────────────────────────────────────────────
+# -- Trigger Scan ------------------------------------------------------------
 @app.post("/api/scan")
 async def trigger_scan(req: ScanRequest):
     # Create scan_run record
@@ -147,16 +166,16 @@ async def trigger_scan(req: ScanRequest):
             "status": "pending"
         }).execute()
 
-    # Create SSE queue for this scan
+    # Create SSE queue BEFORE starting background task
+    # so the first events are never missed
     scan_event_queues[scan_id] = asyncio.Queue()
 
-    # Run scan in background
+    # Run scan in background - event loop stays free due to asyncio.to_thread in tinyfish_client
     asyncio.create_task(run_scan_background(scan_id, req.product_ids))
 
     return {"scan_id": scan_id, "status": "running"}
 
-
-# ── SSE Stream ─────────────────────────────────────────────────────────────
+# -- SSE Stream --------------------------------------------------------------
 @app.get("/api/stream")
 async def stream_scan_events(scan_id: str):
     async def event_generator() -> AsyncGenerator[str, None]:
@@ -164,16 +183,14 @@ async def stream_scan_events(scan_id: str):
         if not queue:
             yield f"data: {json.dumps({'type': 'error', 'message': 'Scan not found'})}\n\n"
             return
-
         while True:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=60.0)
                 yield f"data: {json.dumps(event)}\n\n"
-                if event.get("type") == "scan_complete":
+                if event.get("type") == "scan_complete" or event.get("type") == "scan_error":
                     break
             except asyncio.TimeoutError:
                 yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
-
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -183,8 +200,7 @@ async def stream_scan_events(scan_id: str):
         }
     )
 
-
-# ── Background Scan Worker ─────────────────────────────────────────────────
+# -- Background Scan Worker --------------------------------------------------
 async def run_scan_background(scan_id: str, product_ids: list[str]):
     queue = scan_event_queues[scan_id]
     total_alerts = 0
@@ -196,15 +212,16 @@ async def run_scan_background(scan_id: str, product_ids: list[str]):
         products_res = supabase.table("products").select("*").in_("id", product_ids).execute()
         products = products_res.data
 
-        await emit({"type": "scan_start", "message": f"🚀 Starting scan for {len(products)} products across 3 platforms..."})
+        await emit({"type": "scan_start", "message": f"\U0001f680 Starting scan for {len(products)} products across 3 platforms..."})
 
         for product in products:
-            await emit({"type": "product_start", "message": f"📦 Scanning: {product['name']}"})
+            await emit({"type": "product_start", "message": f"\U0001f4e6 Scanning: {product['name']}"})
 
             supabase.table("scan_run_products").update({"status": "scanning"}) \
                 .eq("scan_id", scan_id).eq("product_id", product["id"]).execute()
 
             # Run TinyFish agents concurrently for all 3 platforms
+            # (now non-blocking thanks to asyncio.to_thread in tinyfish_client)
             scan_results = await scan_product(product, emit)
 
             # Save price history
@@ -230,7 +247,7 @@ async def run_scan_background(scan_id: str, product_ids: list[str]):
                 supabase.table("alerts").insert(alerts).execute()
                 total_alerts += len(alerts)
                 for alert in alerts:
-                    await emit({"type": "alert", "message": f"🔔 {alert['message']}"})
+                    await emit({"type": "alert", "message": f"\U0001f514 {alert['message']}"})
 
             # Generate AI repricing recommendation
             platform_prices = {
@@ -246,7 +263,10 @@ async def run_scan_background(scan_id: str, product_ids: list[str]):
                 **recommendation
             }).execute()
 
-            await emit({"type": "recommendation", "message": f"🧠 AI Recommendation for {product['name']}: {recommendation['recommendation_type'].replace('_', ' ').title()} → ₹{recommendation['suggested_price']}"})
+            await emit({
+                "type": "recommendation",
+                "message": f"\U0001f9e0 AI Recommendation for {product['name']}: {recommendation['recommendation_type'].replace('_', ' ').title()} \u2192 \u20b9{recommendation['suggested_price']}"
+            })
 
             # Mark product as done
             supabase.table("scan_run_products").update({"status": "done"}) \
@@ -265,7 +285,7 @@ async def run_scan_background(scan_id: str, product_ids: list[str]):
             "alerts_generated": total_alerts
         }).eq("id", scan_id).execute()
 
-        await emit({"type": "scan_complete", "message": f"✅ Scan complete! {total_alerts} alerts generated."})
+        await emit({"type": "scan_complete", "message": f"\u2705 Scan complete! {total_alerts} alerts generated."})
 
     except Exception as e:
         supabase.table("scan_runs").update({
@@ -273,16 +293,14 @@ async def run_scan_background(scan_id: str, product_ids: list[str]):
             "error_message": str(e),
             "completed_at": datetime.utcnow().isoformat()
         }).eq("id", scan_id).execute()
-
-        await emit({"type": "scan_error", "message": f"💥 Scan failed: {str(e)}"})
+        await emit({"type": "scan_error", "message": f"\U0001f4a5 Scan failed: {str(e)}"})
 
     finally:
         # Clean up queue after 5 mins
         await asyncio.sleep(300)
         scan_event_queues.pop(scan_id, None)
 
-
-# ── Health Check ───────────────────────────────────────────────────────────
+# -- Health Check ------------------------------------------------------------
 @app.get("/health")
 async def health():
     return {"status": "ok", "service": "AutoOps API"}
