@@ -17,9 +17,6 @@ export const ScanConfig: React.FC = () => {
   const [products, setProducts] = useState([]);
   const [threshold, setThreshold] = useState(15);
 
-  useEffect(() => {
-    getProducts().then(setProducts).catch(console.error);
-  }, []);
 
   return (
     <motion.div 
