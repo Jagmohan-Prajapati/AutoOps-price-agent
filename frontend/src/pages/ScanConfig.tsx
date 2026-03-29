@@ -13,14 +13,13 @@ import {
 import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
 
-const [products, setProducts] = useState([]);
-
-useEffect(() => {
-  getProducts().then(setProducts).catch(console.error);
-}, []);
-
 export const ScanConfig: React.FC = () => {
+  const [products, setProducts] = useState([]);
   const [threshold, setThreshold] = useState(15);
+
+  useEffect(() => {
+    getProducts().then(setProducts).catch(console.error);
+  }, []);
 
   return (
     <motion.div 
@@ -242,3 +241,7 @@ export const ScanConfig: React.FC = () => {
     </motion.div>
   );
 };
+function useEffect(arg0: () => void, arg1: undefined[]) {
+  throw new Error('Function not implemented.');
+}
+
